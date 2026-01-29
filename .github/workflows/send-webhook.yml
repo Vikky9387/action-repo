@@ -1,0 +1,53 @@
+name: Send Webhook Events
+
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+jobs:
+  webhook:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send webhook payload
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: |
+          echo "Event: $GITHUB_EVENT_NAME"
+
+          ACTION="PUSH"
+          FROM_BRANCH=""
+          TO_BRANCH="${GITHUB_REF_NAME}"
+          REQUEST_ID="${GITHUB_SHA}"
+          AUTHOR="${GITHUB_ACTOR}"
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            ACTION="PULL_REQUEST"
+            REQUEST_ID=$(jq -r .pull_request.number "$GITHUB_EVENT_PATH")
+            FROM_BRANCH=$(jq -r .pull_request.head.ref "$GITHUB_EVENT_PATH")
+            TO_BRANCH=$(jq -r .pull_request.base.ref "$GITHUB_EVENT_PATH")
+
+            MERGED=$(jq -r .pull_request.merged "$GITHUB_EVENT_PATH")
+            PR_ACTION=$(jq -r .action "$GITHUB_EVENT_PATH")
+
+            if [ "$PR_ACTION" = "closed" ] && [ "$MERGED" = "true" ]; then
+              ACTION="MERGE"
+            fi
+          fi
+
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          PAYLOAD=$(jq -n \
+            --arg action "$ACTION" \
+            --arg request_id "$REQUEST_ID" \
+            --arg author "$AUTHOR" \
+            --arg from_branch "$FROM_BRANCH" \
+            --arg to_branch "$TO_BRANCH" \
+            --arg timestamp "$TIMESTAMP" \
+            '{action: $action, request_id: $request_id, author: $author, from_branch: $from_branch, to_branch: $to_branch, timestamp: $timestamp}')
+
+          echo "$PAYLOAD"
+
+          curl -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
